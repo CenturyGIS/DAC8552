@@ -1,4 +1,6 @@
-import wpi from 'wiring-pi';
+import { Gpio } from 'onoff';
+import spi from 'spi-device';
+import Promise from 'bluebird';
 import Definitions from './definitions';
 
 export class DAC8552 {
@@ -18,16 +20,14 @@ export class DAC8552 {
     self.spiChannel = config.spiChannel;
     self.csPin = config.csPin;
 
-    if (!config.spiChannel) {
+    if (typeof config.spiChannel !== 'number') {
       throw new Error('SPI Channel not specified. Use config.spiChannel.');
     }
     if (!config.csPin) {
       throw new Error('Chip Select pin not specified. Use config.csPin.');
     }
 
-    wpi.wiringPiSetupPhys();
-    wpi.pinMode(self.csPin, wpi.OUTPUT);
-    wpi.digitalWrite(self.csPin, wpi.HIGH);
+    self.chipSelect = new Gpio(self.csPin, 'out');
 
     const defaults = {
       spiFrequency: 976563,
@@ -36,39 +36,100 @@ export class DAC8552 {
 
     const conf = Object.assign({}, defaults, config);
 
-    const fd = wpi.wiringPiSPISetupMode(self.spiChannel, conf.spiFrequency, conf.spiMode);
-    if (!fd) {
-      throw new Error('Could not access SPI device file');
-    }
+    // TODO: add way to set these options as well
+    const spiDeviceOpts = {
+      mode: spi.MODE1,
+      maxSpeedHz: conf.spiFrequency,
+      noChipSelect: true,
+    };
+
+    this.device = spi.openSync(0, conf.spiChannel, spiDeviceOpts);
+    this.device = Promise.promisifyAll(this.device);
+
+    self.chipSelect.writeSync(1);
   }
 
+
+  /**
+   * _chipRelease - Private chip release
+   *
+   * @return {Promise}
+   */
   _chipRelease() {
-    if (this.csPin) {
-      wpi.digitalWrite(this.csPin, wpi.HIGH);
-    }
+    return new Promise(resolve => this.chipSelect.write(1, resolve));
   }
 
+
+  /**
+   * _chipSelect - Private chip select
+   *
+   * @return {Promise}
+   */
   _chipSelect() {
-    if (this.csPin) {
-      wpi.digitalWrite(this.csPin, wpi.LOW);
-    }
+    return new Promise(resolve => this.chipSelect.write(0, resolve));
+  }
+
+
+  /**
+   * reset - Reset DAC
+   *
+   * @return {Promise}  description
+   */
+  reset() {
+
+    const s = this;
+
+    return s._chipSelect()
+      .then(() => {
+
+        const message = [{
+          sendBuffer: Buffer.from([0, 0, 0]),
+          byteLength: 3,
+          // receiveBuffer: new Buffer(3),
+          // speedHz: 20000,
+          // chipSelectChange: true,
+          microSecondDelay: 2500,
+        }];
+
+        return this.device.transferAsync(message);
+      })
+      .catch((err) => {
+        if (err) {
+          console.error('error', err);
+        }
+      })
+      .then(() => s._chipRelease());
   }
 
   sendValue(channel, value) {
-    this._chipSelect();
 
-    const firstByte;
-    if (channel === 0) {
-      firstByte = Definitions.DAC0
-    } else if (channel === 1) {
-      firstByte = Definitions.DAC1;
-    } else {
-      throw new Error('invalid DAC channel specified (must be 0 or 1)');
-    }
+    const s = this;
+    return s._chipSelect()
+      .then(() => {
 
-    wpi.wiringPiSPIDataRW(this.spiChannel, Buffer.from([firstByte]));
-    wpi.wiringPiSPIDataRW(this.spiChannel, Buffer.from([value >> 8]));
-    wpi.wiringPiSPIDataRW(this.spiChannel, Buffer.from([value & 0xFF]));
-    this._chipRelease();
+        let firstByte;
+        if (channel === 0) {
+          firstByte = Definitions.DAC0;
+        } else if (channel === 1) {
+          firstByte = Definitions.DAC1 | 4;
+        } else {
+          throw new Error('invalid DAC channel specified (must be 0 or 1)');
+        }
+
+        const message = [{
+          sendBuffer: Buffer.from([firstByte, value >> 8, value & 0xFF]),
+          byteLength: 3,
+          // speedHz: 20000,
+          microSecondDelay: 25,
+        }];
+
+        return this.device.transferAsync(message);
+      })
+      .catch((err) => {
+        if (err) {
+          console.error('error', err);
+        }
+      })
+      .then(() => s._chipRelease());
   }
 }
