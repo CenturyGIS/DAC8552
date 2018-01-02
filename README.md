@@ -8,7 +8,7 @@ Digital to Analog conversion with DAC8552. Tested with Raspberry Pi 3 and [Waves
 
 ```js
 var dacConfig = {
-  csPin: 16,
+  csPin: 23,
   spiChannel: 1,
 };
 
