@@ -1,6 +1,6 @@
 {
   "name": "dac8552",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "",
   "main": "lib/dac8552.js",
   "scripts": {
@@ -51,6 +51,6 @@
   "dependencies": {
     "bluebird": "^3.5.1",
     "onoff": "^1.1.8",
-    "spi-device": "^1.0.1"
+    "spi-device": "^2.0.9"
   }
 }
